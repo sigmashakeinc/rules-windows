@@ -1,0 +1,61 @@
+# windows_write_safety.rules — Windows write-time safety enforcement.
+# Technology: windows | Capability: write
+# Covers: hosts file, autorun.inf, startup folders, Defender exclusions, registry exports.
+
+rule no-hosts-file-redirect {
+  enabled true
+  priority 95
+  severity error
+  ASK write
+  IF path GLOB "**/drivers/etc/hosts" AND content LINE_REGEX "^[0-9].*\\.microsoft\\.com"
+  OR path GLOB "**/drivers/etc/hosts" AND content LINE_REGEX "^[0-9].*windowsupdate\\.com"
+  OR path GLOB "**/drivers/etc/hosts" AND content LINE_REGEX "^[0-9].*\\.windows\\.com"
+  MESSAGE "Redirecting Microsoft/Windows Update domains in the hosts file blocks security patches and Defender signature updates. This is a common malware technique to prevent detection and remediation."
+  PROMPT "Are you blocking Microsoft update domains intentionally? This will prevent Windows security patches from installing. Use WSUS or a group policy to control updates instead."
+}
+
+rule no-autorun-inf {
+  enabled true
+  priority 100
+  severity error
+  DENY write
+  IF path GLOB "**/autorun.inf"
+  OR content CONTAINS "[autorun]" AND content CONTAINS "open="
+  MESSAGE "autorun.inf files trigger automatic execution when media is inserted — a classic worm propagation and persistence technique. Modern Windows disables AutoRun, but these files remain suspicious indicators."
+}
+
+rule no-startup-folder-write {
+  enabled true
+  priority 90
+  severity error
+  ASK write
+  IF path GLOB "**/Start Menu/Programs/Startup/**"
+  OR path GLOB "**/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/**"
+  OR path GLOB "**/ProgramData/Microsoft/Windows/Start Menu/Programs/Startup/**"
+  MESSAGE "Placing files in Windows Startup folders creates persistence that executes on every login. This is a common malware persistence mechanism."
+  PROMPT "Is adding to the Startup folder intentional? Consider a Windows service (more controllable) or Task Scheduler with explicit user account instead of Startup folder persistence."
+}
+
+rule no-defender-exclusion {
+  enabled true
+  priority 100
+  severity error
+  ASK write
+  IF content CONTAINS "Add-MpPreference" AND content CONTAINS "ExclusionPath"
+  OR content CONTAINS "Add-MpPreference" AND content CONTAINS "ExclusionProcess"
+  OR content LINE_REGEX "DisableRealtimeMonitoring.*true"
+  MESSAGE "Adding Windows Defender exclusions creates security blind spots. Attackers commonly write malware to excluded paths to bypass detection. Only exclude specific verified trusted paths."
+  PROMPT "Is this Defender exclusion scoped to a specific known-safe path? Document the business reason and ensure the path is not user-writable by untrusted processes."
+}
+
+rule no-reg-export-sensitive {
+  enabled true
+  priority 90
+  severity error
+  ASK write
+  IF path GLOB "**/*.reg" AND content CONTAINS "HKLM\\SAM"
+  OR path GLOB "**/*.reg" AND content CONTAINS "HKLM\\SECURITY"
+  OR path GLOB "**/*.reg" AND content CONTAINS "HKLM\\SYSTEM\\CurrentControlSet\\Control\\LSA"
+  MESSAGE "Exporting SAM, SECURITY, or LSA registry hives captures credential material including password hashes and LSA secrets. These exports enable offline password cracking."
+  PROMPT "Is exporting this registry hive intentional? SAM/SECURITY exports should be restricted to authorized incident response or forensic procedures, not development workflows."
+}
