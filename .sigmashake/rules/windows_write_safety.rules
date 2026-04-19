@@ -55,3 +55,38 @@ rule no-reg-export-sensitive {
   OR path GLOB "**/*.reg" AND content CONTAINS "HKLM\\SYSTEM\\CurrentControlSet\\Control\\LSA"
   MESSAGE "Exporting SAM, SECURITY, or LSA registry hives captures credential material including password hashes and LSA secrets. These exports enable offline password cracking."
 }
+
+rule no-motw-strip {
+  enabled true
+  priority 95
+  severity error
+  ASK write
+  IF content CONTAINS "Unblock-File"
+  OR content LINE_REGEX "Remove-Item.*:Zone\\.Identifier"
+  OR content LINE_REGEX "(Set|Clear)-Content.*-Stream\\s+Zone\\.Identifier"
+  OR content LINE_REGEX "\\[IO\\.File\\]::.*Zone\\.Identifier"
+  MESSAGE "RISK: Stripping the Mark-of-the-Web (Zone.Identifier ADS) defeats SmartScreen, Smart App Control, and Office Protected View — the exact bypass exploited by CVE-2024-21412, CVE-2024-38213 (copy2pwn), and CVE-2025-33053. FIX: leave MOTW intact; if a file is internally trusted, re-sign it with Authenticode instead of unblocking."
+  PROMPT "Why is MOTW being removed? Prefer Authenticode signing over Unblock-File so SmartScreen reputation and SAC enforcement keep working."
+}
+
+rule no-wdac-applocker-bypass {
+  enabled true
+  priority 95
+  severity error
+  LOG write
+  IF path GLOB "**/*.csproj" AND content LINE_REGEX "<Target\\s+Name=.*>[\\s\\S]*<Exec"
+  OR path GLOB "**/*.xml" AND content CONTAINS "InstallUtil"
+  OR content REGEX "msbuild.*\\s+\\S+\\.(xml|csproj|proj)\\b"
+  OR content CONTAINS "CodeIntegrity\\SiPolicy"
+  MESSAGE "RISK: Inline MSBuild <Target><Exec> blocks and InstallUtil-driven payloads are catalogued WDAC/AppLocker bypasses (MITRE T1127), and writes under CodeIntegrity\\SiPolicy can swap policy to audit mode. FIX: enforce WDAC in block mode with a signed policy and remove MSBuild/InstallUtil from your allowlist."
+}
+
+rule no-bits-job-persistence {
+  enabled true
+  priority 90
+  severity error
+  LOG write
+  IF content LINE_REGEX "bitsadmin\\s+\\/setnotifycmdline"
+  OR content LINE_REGEX "Start-BitsTransfer.*-Priority\\s+Foreground"
+  MESSAGE "RISK: BITS jobs with /SetNotifyCmdLine survive reboot, run as SYSTEM, and bypass many egress filters — a long-running persistence/exfil technique (MITRE T1197). FIX: restrict BITS destinations to WSUS/Intune FQDNs via firewall and GPO, and use a Windows Service for legitimate background work."
+}
